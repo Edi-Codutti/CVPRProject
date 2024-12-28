@@ -138,7 +138,7 @@ class Calibrator:
             k2 = dist_par[1]
             residuals = np.empty((0,1))
             for i in range(self._no_of_images):
-                H = K@np.vstack((R[i][:,0].reshape(-1,1), R[i][:,1].reshape(-1,1), t[i].reshape(-1,1)))
+                H = K@(np.hstack((R[i][:,0].reshape(-1,1), R[i][:,1].reshape(-1,1), t[i].reshape(-1,1))))
                 proj_coords = np.transpose(H@real_coords.T)
                 skewness = np.arctan(K[0,0]/K[0,1])
                 alpha_u, alpha_v = K[0,0], np.abs(K[1,1]*np.sin(skewness))
@@ -148,7 +148,7 @@ class Calibrator:
                 rd2 = ((u-u0)/alpha_u)**2+((v-v0)/alpha_v)**2
                 uh = (u-u0)*(1+k1*rd2+k2*(rd2)**2)+u0
                 vh = (v-v0)*(1+k1*rd2+k2*(rd2)**2)+v0
-                distorted = np.hstack((uh, vh))
+                distorted = np.hstack((uh.reshape(-1,1), vh.reshape(-1,1)))
                 chunk_residual = self.pix_coords[i]-distorted
                 chunk_residual = np.linalg.norm(chunk_residual, axis=1)
                 residuals = np.vstack((residuals, chunk_residual.reshape(-1,1)))
@@ -158,34 +158,34 @@ class Calibrator:
             K, R, t = self._unpack_parameters(x, False)
             residuals = np.empty((0,1))
             for i in range(self._no_of_images):
-                H = K@np.vstack((R[i][:,0].reshape(-1,1), R[i][:,1].reshape(-1,1), t[i].reshape(-1,1)))
+                H = K@np.hstack((R[i][:,0].reshape(-1,1), R[i][:,1].reshape(-1,1), t[i].reshape(-1,1)))
                 proj_coords = np.transpose(H@real_coords.T)
                 u = proj_coords[:,0]/proj_coords[:,2]
                 v = proj_coords[:,1]/proj_coords[:,2]
-                distorted = np.hstack((u, v))
+                distorted = np.hstack((u.reshape(-1,1), v.reshape(-1,1)))
                 chunk_residual = self.pix_coords[i]-distorted
                 chunk_residual = np.linalg.norm(chunk_residual, axis=1)
                 residuals = np.vstack((residuals, chunk_residual.reshape(-1,1)))
             return residuals.flatten()
         x0 = self._pack_parameters(radial_distortion)
         if radial_distortion is True:
-            parameters = least_squares(fr, x0, method='lm')
-            K, dist_par, R, t = self._unpack_parameters(parameters, True)
+            result = least_squares(fr, x0, method='lm')
+            K, dist_par, R, t = self._unpack_parameters(result.x, True)
             projections = []
             for i in range(self._no_of_images):
                 U, _ , V_t = np.linalg.svd(R[i])
                 R[i] = U@V_t
-                P = K@np.hstack((R[i], t[i]))
+                P = K@np.hstack((R[i], t[i].reshape(-1,1)))
                 projections.append(P)
             self.distortion_parameters = dist_par
         else:
-            parameters = least_squares(fnr, x0, method='lm')
-            K, R, t = self._unpack_parameters(parameters, False)
+            result = least_squares(fnr, x0, method='lm')
+            K, R, t = self._unpack_parameters(result.x, False)
             projections = []
             for i in range(self._no_of_images):
                 U, _ , V_t = np.linalg.svd(R[i])
                 R[i] = U@V_t
-                P = K@np.hstack((R[i], t[i]))
+                P = K@np.hstack((R[i], t[i].reshape(-1,1)))
                 projections.append(P)
             
         self.K = K
@@ -237,7 +237,7 @@ class Calibrator:
             x = np.append(x,r)
             t = self.translations[i]
             x = np.append(x,t)
-        return x
+        return np.array(x)
     
     def _unpack_parameters(self, x:np.ndarray, radial:bool):
         flattened_K = x[0:9]
