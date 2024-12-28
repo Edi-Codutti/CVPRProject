@@ -1,7 +1,7 @@
-from matplotlib import pyplot as plt
-import os
 import numpy as np
 import cv2 # OpenCV
+from scipy.optimize import least_squares
+from scipy.spatial.transform import Rotation
 
 class Calibrator:
     def __init__(self, grid_size=(8,11)):
@@ -13,6 +13,9 @@ class Calibrator:
         self.projection_matrices = []
         self.reprojection_errors = []
         self.distortion_parameters = np.array([0,0])
+        self.rotations = []
+        self.translations = []
+        self._no_of_images = 0
         
     def estimate_homography(self, image)->tuple[np.ndarray, np.ndarray, np.ndarray]:
         return_value, corners = cv2.findChessboardCorners(image, patternSize=self.grid_size)
@@ -54,17 +57,31 @@ class Calibrator:
         r2 = lambdas * K_inv@h2
         t = lambdas * K_inv@h3
         t = t.reshape((-1, 1))
+        self.translations.append(t)
         r3 = np.cross(r1, r2)
         R = np.hstack((r1.reshape((-1, 1)), r2.reshape((-1, 1)), r3.reshape((-1, 1))))
+        self.rotations.append(R)
         U, _ , V_t = np.linalg.svd(R)
         R = U@V_t
         P = K@np.hstack((R, t))
         return P
     
-    def reprojection_error (self, P:np.ndarray, R:np.ndarray, I:np.ndarray):
+    def reprojection_error (self, P:np.ndarray, R:np.ndarray, I:np.ndarray, radial:bool):
         epsilon_tot=0
         for i in range(R.shape[0]):
-            epsilon = ((np.dot(P[0], R[i]) / np.dot(P[2], R[i]))-I[i][0])**2 + ((np.dot(P[1], R[i]) / np.dot(P[2], R[i]))-I[i][1])**2
+            u = (np.dot(P[0], R[i]) / np.dot(P[2], R[i]))
+            v = (np.dot(P[1], R[i]) / np.dot(P[2], R[i]))
+            if radial is True:
+                K = self.K
+                k1 = self.distortion_parameters[0]
+                k2 = self.distortion_parameters[1]
+                skewness = np.arctan(K[0,0]/K[0,1])
+                alpha_u, alpha_v = K[0,0], np.abs(K[1,1]*np.sin(skewness))
+                u0, v0 = K[0,2], K[1,2]
+                rd2 = ((u-u0)/alpha_u)**2+((v-v0)/alpha_v)**2
+                u = (u-u0)*(1+k1*rd2+k2*(rd2)**2)+u0
+                v = (v-v0)*(1+k1*rd2+k2*(rd2)**2)+v0
+            epsilon = (u-I[i][0])**2 + (v-I[i][1])**2
             epsilon_tot += epsilon
         return epsilon_tot
     
@@ -112,9 +129,73 @@ class Calibrator:
         distortion_params = np.linalg.inv(A.T@A)@A.T@b
         self.distortion_parameters = distortion_params
         return distortion_params
-
     
+    def iterative_refienment(self, radial_distortion:bool):
+        def fr(x:np.ndarray, *args, **kwargs):
+            real_coords = self.real_coords[:,np.r_[0,1,3]]
+            K, dist_par, R, t = self._unpack_parameters(x, True)
+            k1 = dist_par[0]
+            k2 = dist_par[1]
+            residuals = np.empty((0,1))
+            for i in range(self._no_of_images):
+                H = K@np.vstack((R[i][:,0].reshape(-1,1), R[i][:,1].reshape(-1,1), t[i].reshape(-1,1)))
+                proj_coords = np.transpose(H@real_coords.T)
+                skewness = np.arctan(K[0,0]/K[0,1])
+                alpha_u, alpha_v = K[0,0], np.abs(K[1,1]*np.sin(skewness))
+                u0, v0 = K[0,2], K[1,2]
+                u = proj_coords[:,0]/proj_coords[:,2]
+                v = proj_coords[:,1]/proj_coords[:,2]
+                rd2 = ((u-u0)/alpha_u)**2+((v-v0)/alpha_v)**2
+                uh = (u-u0)*(1+k1*rd2+k2*(rd2)**2)+u0
+                vh = (v-v0)*(1+k1*rd2+k2*(rd2)**2)+v0
+                distorted = np.hstack((uh, vh))
+                chunk_residual = self.pix_coords[i]-distorted
+                chunk_residual = np.linalg.norm(chunk_residual, axis=1)
+                residuals = np.vstack((residuals, chunk_residual.reshape(-1,1)))
+            return residuals.flatten()
+        def fnr(x:np.ndarray, *args, **kwargs):
+            real_coords = self.real_coords[:,np.r_[0,1,3]]
+            K, R, t = self._unpack_parameters(x, False)
+            residuals = np.empty((0,1))
+            for i in range(self._no_of_images):
+                H = K@np.vstack((R[i][:,0].reshape(-1,1), R[i][:,1].reshape(-1,1), t[i].reshape(-1,1)))
+                proj_coords = np.transpose(H@real_coords.T)
+                u = proj_coords[:,0]/proj_coords[:,2]
+                v = proj_coords[:,1]/proj_coords[:,2]
+                distorted = np.hstack((u, v))
+                chunk_residual = self.pix_coords[i]-distorted
+                chunk_residual = np.linalg.norm(chunk_residual, axis=1)
+                residuals = np.vstack((residuals, chunk_residual.reshape(-1,1)))
+            return residuals.flatten()
+        x0 = self._pack_parameters(radial_distortion)
+        if radial_distortion is True:
+            parameters = least_squares(fr, x0, method='lm')
+            K, dist_par, R, t = self._unpack_parameters(parameters, True)
+            projections = []
+            for i in range(self._no_of_images):
+                U, _ , V_t = np.linalg.svd(R[i])
+                R[i] = U@V_t
+                P = K@np.hstack((R[i], t[i]))
+                projections.append(P)
+            self.distortion_parameters = dist_par
+        else:
+            parameters = least_squares(fnr, x0, method='lm')
+            K, R, t = self._unpack_parameters(parameters, False)
+            projections = []
+            for i in range(self._no_of_images):
+                U, _ , V_t = np.linalg.svd(R[i])
+                R[i] = U@V_t
+                P = K@np.hstack((R[i], t[i]))
+                projections.append(P)
+            
+        self.K = K
+        self.rotations = R
+        self.translations = t
+        self.projection_matrices = projections
+        return
+ 
     def fit(self, images:list[np.ndarray], radial_distortion=False, iterative=False):
+        self._no_of_images = len(images)
         for image in images:
             H, real_coords, pix_coords = self.estimate_homography(image)
             if self.real_coords is None:
@@ -126,14 +207,12 @@ class Calibrator:
         for H in self.homographies:
             P = self.estimate_projection_matrix(H, self.K)
             self.projection_matrices.append(P)
-        print(radial_distortion)
         if radial_distortion is True:
             self.estimate_distortion()
-            print('eseguito')
-        if iterative:
-            pass
+        if iterative is True:
+            self.iterative_refienment(radial_distortion)
         for i,P in enumerate(self.projection_matrices):
-            error = self.reprojection_error(P, self.real_coords, self.pix_coords[i])
+            error = self.reprojection_error(P, self.real_coords, self.pix_coords[i], radial_distortion)
             self.reprojection_errors.append(error)
 
     def _vij_function (self, H, i, j):
@@ -145,3 +224,38 @@ class Calibrator:
         v[4]=H[2][i]*H[1][j]+H[1][i]*H[2][j]
         v[5]=H[2][i]*H[2][j]
         return v
+    
+    def _pack_parameters(self, radial:bool):
+        flattened_K = self.K.flatten()
+        if radial is True:
+            x = np.append(flattened_K, self.distortion_parameters)
+        else:
+            x = flattened_K
+        for i in range(self._no_of_images):
+            r = Rotation.from_matrix(self.rotations[i])
+            r = r.as_mrp()
+            x = np.append(x,r)
+            t = self.translations[i]
+            x = np.append(x,t)
+        return x
+    
+    def _unpack_parameters(self, x:np.ndarray, radial:bool):
+        flattened_K = x[0:9]
+        K = flattened_K.reshape((3,3))
+        R = []
+        t = []
+        if radial is True:
+            distortion_params = x[9:11]
+            for i in range(11, x.shape[0], 6):
+                rot = x[i:i+3]
+                rot = Rotation.from_mrp(rot)
+                R.append(rot.as_matrix())
+                t.append(x[i+3:i+6])
+            return K, distortion_params, R, t
+        else:
+            for i in range(9, x.shape[0], 6):
+                rot = x[i:i+3]
+                rot = Rotation.from_mrp(rot)
+                R.append(rot.as_matrix())
+                t.append(x[i+3:i+6])
+            return K, R, t
