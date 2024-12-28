@@ -126,8 +126,10 @@ class Calibrator:
         for H in self.homographies:
             P = self.estimate_projection_matrix(H, self.K)
             self.projection_matrices.append(P)
-        if radial_distortion:
-            pass
+        print(radial_distortion)
+        if radial_distortion is True:
+            self.estimate_distortion()
+            print('eseguito')
         if iterative:
             pass
         for i,P in enumerate(self.projection_matrices):
