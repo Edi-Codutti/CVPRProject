@@ -218,6 +218,24 @@ class Calibrator:
             error = self.reprojection_error(P, self.real_coords, self.pix_coords[i], radial_distortion)
             self.reprojection_errors.append(error)
 
+    def compensate_radial_distortion(self, image:np.ndarray) -> np.ndarray:
+        compensated = np.empty_like(image)
+        K = self.K
+        skewness = np.arctan(K[0,0]/K[0,1])
+        alpha_u, alpha_v = K[0,0], np.abs(K[1,1]*np.sin(skewness))
+        u0, v0 = K[0,2], K[1,2]
+        k1 = self.distortion_parameters[0]
+        k2 = self.distortion_parameters[1]
+        map_x = np.empty_like(image, dtype=np.float32)
+        map_y = np.empty_like(image, dtype=np.float32)
+        for u in range(compensated.shape[1]):
+            for v in range(compensated.shape[0]):
+                rd2 = ((u-u0)/alpha_u)**2+((v-v0)/alpha_v)**2
+                map_x[v,u] = (u-u0)*(1+k1*rd2+k2*(rd2)**2)+u0
+                map_y[v,u] = (v-v0)*(1+k1*rd2+k2*(rd2)**2)+v0
+        compensated = cv2.remap(image, map_x, map_y, cv2.INTER_LINEAR)
+        return compensated
+
     def _vij_function (self, H, i, j):
         v=np.zeros(6)
         v[0]=H[0][i]*H[0][j]
