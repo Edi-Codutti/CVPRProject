@@ -4,8 +4,9 @@ from scipy.optimize import least_squares
 from scipy.spatial.transform import Rotation
 
 class Calibrator:
-    def __init__(self, grid_size=(8,11)):
+    def __init__(self, grid_size=(8,11), square_size=11/1000):
         self.grid_size = grid_size
+        self.square_size = square_size
         self.reset()
 
     def reset(self):
@@ -22,15 +23,13 @@ class Calibrator:
 
         
     def estimate_homography(self, image)->tuple[np.ndarray, np.ndarray, np.ndarray]:
-        return_value, corners = cv2.findChessboardCorners(image, patternSize=self.grid_size)
-        assert(return_value)
         gray = cv2.cvtColor(image.copy(), cv2.COLOR_BGR2GRAY)
-        corners = corners.reshape((88,2)).copy()
-        criteria = (cv2.TERM_CRITERIA_MAX_ITER | cv2.TERM_CRITERIA_EPS, 100, 0.001)
-        cv2.cornerSubPix(gray, corners, (5,5), (-1,-1), criteria)
+        return_value, corners = cv2.findChessboardCornersSB(gray, patternSize=self.grid_size)
+        assert(return_value)
+        corners = corners.reshape((self.grid_size[0]*self.grid_size[1],2)).copy()
         A = np.empty((0,9), dtype=float)
         O = np.array([0,0,0]).reshape(1,3)
-        square_size = 11/1000 # meters
+        square_size = self.square_size # meters
         real_coords = []
         pix_coords = []
         for index, corner in enumerate(corners):
