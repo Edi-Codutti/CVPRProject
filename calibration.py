@@ -44,7 +44,6 @@ class Calibrator:
             m = np.array([Xmm, Ymm, 1]).reshape(1,3)
             A = np.vstack((A, np.hstack((m,O,-Xpix*m))))
             A = np.vstack((A, np.hstack((O,m,-Ypix*m))))
-
         _, _, Vh = np.linalg.svd(A)
         h = Vh.transpose()[:,-1]
         H = h.reshape(3,3)
@@ -232,7 +231,7 @@ class Calibrator:
                 rd2 = ((u-u0)/alpha_u)**2+((v-v0)/alpha_v)**2
                 map_x[v,u] = (u-u0)*(1+k1*rd2+k2*(rd2)**2)+u0
                 map_y[v,u] = (v-v0)*(1+k1*rd2+k2*(rd2)**2)+v0
-        compensated = cv2.remap(image, map_x, map_y, cv2.INTER_LINEAR)
+        compensated = cv2.remap(image, map_x, map_y, cv2.INTER_CUBIC)
         return compensated
 
     def _vij_function (self, H, i, j):
