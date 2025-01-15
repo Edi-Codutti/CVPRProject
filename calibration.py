@@ -127,7 +127,7 @@ class Calibrator:
                 vh = self.pix_coords[i][j,1]
                 b = np.vstack((b, np.array([uh-u]), np.array([vh-v])))
         distortion_params = np.linalg.inv(A.T@A)@A.T@b
-        self.distortion_parameters = distortion_params
+        self.distortion_parameters = distortion_params.flatten()
         return distortion_params
     
     def iterative_refienment(self, radial_distortion:bool):
