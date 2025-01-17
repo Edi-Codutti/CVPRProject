@@ -1,6 +1,6 @@
 import numpy as np
 import cv2 # OpenCV
-from scipy.optimize import least_squares
+from scipy.optimize import least_squares, root
 from scipy.spatial.transform import Rotation
 
 class Calibrator:
@@ -129,7 +129,42 @@ class Calibrator:
         distortion_params = np.linalg.inv(A.T@A)@A.T@b
         self.distortion_parameters = distortion_params.flatten()
         return distortion_params
+
+    def compensate_coordinates(self, uh, vh):
+        K = self.K
+        skewness = np.arctan(K[0,0]/K[0,1])
+        alpha_u, alpha_v = K[0,0], np.abs(K[1,1]*np.sin(skewness))
+        u0, v0 = K[0,2], K[1,2]
+        xh = (uh - u0)/alpha_u
+        yh = (vh - v0)/alpha_v
+        def g(x, y):
+            k1 = self.distortion_parameters[0]
+            k2 = self.distortion_parameters[1]
+            return 1 + k1*(x**2 + y**2) + k2*(x**2 + y**2)**2
+        def jac(vec):
+            k1 = self.distortion_parameters[0]
+            k2 = self.distortion_parameters[1]
+            x = vec[0]
+            y = vec[1]
+            j11 = 2*k1*(x**2) + 4*k2*(x**4) + 4*k2*(x**2)*(y**2) + g(x, y) 
+            j12 = 2*k1*x*y + 4*k2*(x**3)*y + 4*k2*x*(y**3) 
+            j21 = j12
+            j22 = 2*k1*(y**2) + 4*k2*(y**4) + 4*k2*(x**2)*(y**2) + g(x, y) 
+            return np.array([[j11, j12], [j21, j22]])
+        def f(vec):
+            fx = vec[0] * g(vec[0], vec[1]) - xh
+            fy = vec[1] * g(vec[0], vec[1]) - yh
+            return np.array([fx, fy])
+        res = root(f, np.array([xh, yh]), jac = jac, tol = 1e-7)
+        #if(res.success is False):
+            #print(res.message)
+        x = res.x[0]
+        y = res.x[1]
+        u = x*alpha_u + u0
+        v = y*alpha_v + v0
+        return (u,v)
     
+            
     def iterative_refienment(self, radial_distortion:bool):
         def fr(x:np.ndarray, *args, **kwargs):
             real_coords = self.real_coords[:,np.r_[0,1,3]]
@@ -226,11 +261,13 @@ class Calibrator:
         k2 = self.distortion_parameters[1]
         map_x = np.empty_like(image, dtype=np.float32)
         map_y = np.empty_like(image, dtype=np.float32)
-        for u in range(compensated.shape[1]):
-            for v in range(compensated.shape[0]):
-                rd2 = ((u-u0)/alpha_u)**2+((v-v0)/alpha_v)**2
-                map_x[v,u] = (u-u0)*(1+k1*rd2+k2*(rd2)**2)+u0
-                map_y[v,u] = (v-v0)*(1+k1*rd2+k2*(rd2)**2)+v0
+        for uh in range(compensated.shape[1]):
+            for vh in range(compensated.shape[0]):
+                '''rd2 = ((u-u0)/alpha_u)**2+((v-v0)/alpha_v)**2
+                    map_x[v,u] = (u-u0)*(1+k1*rd2+k2*(rd2)**2)+u0
+                    map_y[v,u] = (v-v0)*(1+k1*rd2+k2*(rd2)**2)+v0'''
+                map_x[vh,uh], map_y[vh,uh] = self.compensate_coordinates(uh, vh)
+                print(map_x, map_y)
         compensated = cv2.remap(image, map_x, map_y, cv2.INTER_CUBIC)
         return compensated
 
