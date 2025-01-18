@@ -83,6 +83,7 @@ class Calibrator:
                 v = (v-v0)*(1+k1*rd2+k2*(rd2)**2)+v0
             epsilon = (u-I[i][0])**2 + (v-I[i][1])**2
             epsilon_tot += epsilon
+            epsilon_tot += epsilon_tot/(R.shape[0])
         return epsilon_tot
     
     def calculate_V(self)->np.ndarray:
@@ -261,13 +262,13 @@ class Calibrator:
         k2 = self.distortion_parameters[1]
         map_x = np.empty_like(image, dtype=np.float32)
         map_y = np.empty_like(image, dtype=np.float32)
-        for uh in range(compensated.shape[1]):
-            for vh in range(compensated.shape[0]):
-                '''rd2 = ((u-u0)/alpha_u)**2+((v-v0)/alpha_v)**2
-                    map_x[v,u] = (u-u0)*(1+k1*rd2+k2*(rd2)**2)+u0
-                    map_y[v,u] = (v-v0)*(1+k1*rd2+k2*(rd2)**2)+v0'''
-                map_x[vh,uh], map_y[vh,uh] = self.compensate_coordinates(uh, vh)
-                print(map_x, map_y)
+        for u in range(compensated.shape[1]):
+            for v in range(compensated.shape[0]):
+                rd2 = ((u-u0)/alpha_u)**2+((v-v0)/alpha_v)**2
+                map_x[v,u] = (u-u0)*(1+k1*rd2+k2*(rd2)**2)+u0
+                map_y[v,u] = (v-v0)*(1+k1*rd2+k2*(rd2)**2)+v0
+                '''map_x[vh,uh], map_y[vh,uh] = self.compensate_coordinates(uh, vh)
+                print(map_x, map_y)'''
         compensated = cv2.remap(image, map_x, map_y, cv2.INTER_CUBIC)
         return compensated
 
