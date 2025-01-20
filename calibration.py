@@ -83,7 +83,7 @@ class Calibrator:
                 v = (v-v0)*(1+k1*rd2+k2*(rd2)**2)+v0
             epsilon = (u-I[i][0])**2 + (v-I[i][1])**2
             epsilon_tot += epsilon
-            epsilon_tot += epsilon_tot/(R.shape[0])
+        epsilon_tot = epsilon_tot/(R.shape[0])
         return epsilon_tot
     
     def calculate_V(self)->np.ndarray:
@@ -157,13 +157,23 @@ class Calibrator:
             fy = vec[1] * g(vec[0], vec[1]) - yh
             return np.array([fx, fy])
         res = root(f, np.array([xh, yh]), jac = jac, tol = 1e-7)
-        #if(res.success is False):
-            #print(res.message)
         x = res.x[0]
         y = res.x[1]
         u = x*alpha_u + u0
         v = y*alpha_v + v0
         return (u,v)
+    
+    def distort_coordinates(self, u, v):
+        K = self.K
+        k1 = self.distortion_parameters[0]
+        k2 = self.distortion_parameters[1]
+        skewness = np.arctan(K[0,0]/K[0,1])
+        alpha_u, alpha_v = K[0,0], np.abs(K[1,1]*np.sin(skewness))
+        u0, v0 = K[0,2], K[1,2]
+        rd2 = ((u-u0)/alpha_u)**2+((v-v0)/alpha_v)**2
+        uh = (u-u0)*(1+k1*rd2+k2*(rd2)**2)+u0
+        vh = (v-v0)*(1+k1*rd2+k2*(rd2)**2)+v0
+        return (uh, vh)
     
             
     def iterative_refienment(self, radial_distortion:bool):
